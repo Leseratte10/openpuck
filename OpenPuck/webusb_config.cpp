@@ -1,4 +1,5 @@
 #include "webusb_config.h"
+#include "board_config.h"
 #include "config.h"
 #include "bonds.h"
 #include "rf_link.h"
@@ -37,6 +38,25 @@ static void fwupAckPost(uint8_t status)
 	g_fwupAckStatus = status;
 	g_fwupAckOff = fwupNextOff();
 	g_fwupAckPend = true;
+}
+
+static bool boardCommand(uint8_t op)
+{
+#if !OPK_HAS_ADAFRUIT_DFU
+	// The factory Open DFU bootloader uses a different settings page.
+	// 0x25 (full board wipe) is rejected for the same reason AND because its recovery story doesn't exist
+	// here: it erases the app expecting the resident UF2 bootloader to come up as a drag-and-drop drive,
+	// and its bootloader-settings page (0xFF000) lands inside this board's factory bootloader region.
+	if (op == 0x0B || op == 0x0C || op == 0x25) {
+		g_blobRequest = true;
+		return true;
+	}
+	if (op >= 0x20 && op <= 0x24) {
+		fwupAckPost(FWUP_ERR_STATE);
+		return true;
+	}
+#endif
+	return false;
 }
 
 // blob payload = [ver=10][mode][mDiv][mFric][qamMap(active)][abSwap(active)][back0..3(active)][connSlot(0xFF=none)][linkUp]
@@ -633,6 +653,11 @@ void webusbPoll()
 					       1;
 			if (n < need)
 				break; // wait for more bytes
+			if (boardCommand(op)) {
+				memmove(buf, buf + need, n - need);
+				n -= need;
+				continue;
+			}
 			if (op == 0x01) {
 				g_blobRequest =
 					true; // sent from the usbd task (webusbSofDrain)

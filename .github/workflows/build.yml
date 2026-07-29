@@ -91,6 +91,9 @@ jobs:
           mkdir -p build/openpuck build/cache/openpuck
           make build BUILD_PATH=build/cache/openpuck OUTPUT_DIR=build/openpuck
 
+      - name: Compile MDBT50Q-CX-40
+        run: make build-raytac
+
       - name: Generate UF2 (OpenPuck)
         # The Adafruit nRF52 core leaves its UF2 objcopy recipe commented out in
         # platform.txt, so arduino-cli only emits .hex/.zip. Convert the .hex to
