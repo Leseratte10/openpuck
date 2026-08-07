@@ -52,7 +52,7 @@ HIDIOCGRDESCSIZE = _IOR('H', 0x01, 4)
 HIDIOCGRDESC = _IOR('H', 0x02, 4 + 4096)
 
 VALVE_VID = 0x28DE
-PUCK_PID = 0x1304
+PUCK_PIDS = (0x1304, 0x1305)
 CTRL_PIDS = (0x1302, 0x1301, 0x1303, 0x1205)
 FEAT_LEN = 64  # Valve feature reports are exactly 64 bytes
 
@@ -109,12 +109,12 @@ def _first_usage_page(fd):
 
 
 class HidDev:
-    def __init__(self, node, vid, pid, serial, vendor_str = "Valve"):
+    def __init__(self, node, vid, pid, serial, info_str = "Valve"):
         self.node = node
         self.vid = vid
         self.pid = pid
         self.serial = serial
-        self.vendor_str = vendor_str
+        self.info_str = info_str
         self.fd = os.open(node, os.O_RDWR)
         self.usage_page = _first_usage_page(self.fd)
 
@@ -180,16 +180,19 @@ def enumerate_devices():
             # If these don't match, this is not a Puck slot, but some other random HID interface.
             continue
 
-        # If we're here, this is a Puck. Let's detect and display if it's a Valve Puck or an OpenPuck.
+        # If we're here, this is a Puck. Let's detect and display its type.
         # OpenPuck can be detected by the OpenPuck mouse wake interface. 
 
         devnode = iface_dir.parent
-        device_vendor = "Valve"
+        device_vendor = "Valve Puck"
 
-        for subnode in glob.glob(str(devnode) + "/" + devnode.name + ":*/interface"):
-            txt = Path(subnode).read_text().strip()
-            if "OpenPuck" in txt:
-                device_vendor = "OpenPuck"
+        if pid == 0x1305:
+            device_vendor = "Valve Steam Machine"
+        else:
+            for subnode in glob.glob(str(devnode) + "/" + devnode.name + ":*/interface"):
+                txt = Path(subnode).read_text().strip()
+                if "OpenPuck" in txt:
+                    device_vendor = "OpenPuck"
 
         try:
             dev = HidDev(node, vid, pid, serial, device_vendor)
@@ -202,7 +205,7 @@ def enumerate_devices():
         if dev.usage_page not in (0x01, None):
             dev.close()
             continue
-        if pid == PUCK_PID:
+        if pid in PUCK_PIDS:
             out["puck"].append(dev)
         elif pid in CTRL_PIDS:
             out["ctrl"].append(dev)
@@ -226,7 +229,7 @@ def read_slots(puck_list):
     for dev in sorted(puck_list, key=nodesort):
         if last_dev is not None and dev.serial != last_dev.serial:
             # This is a new puck, append the old puck and all its slots to the list.
-            pucks.append({"serial": last_dev.serial, "slots": slots, "vendor": last_dev.vendor_str})
+            pucks.append({"serial": last_dev.serial, "slots": slots, "info_str": last_dev.info_str})
             slots = []
             idx = 0
         try:
@@ -242,7 +245,7 @@ def read_slots(puck_list):
         last_dev = dev
         idx = idx + 1
 
-    pucks.append({"serial": dev.serial, "slots": slots, "vendor": dev.vendor_str})
+    pucks.append({"serial": dev.serial, "slots": slots, "info_str": dev.info_str})
     return pucks
 
 
@@ -250,7 +253,7 @@ def get_puck_slot_for_writing(puck_serial=None, slot=None):
     devs = enumerate_devices()
     pucks = sorted(devs["puck"], key=nodesort)
     if not pucks:
-        raise SystemExit("no puck (28DE:1304) control interface found")
+        raise SystemExit("no puck (28DE:1304/1305) control interface found")
 
     puck_objects = read_slots(pucks)
     if puck_serial is None and len(puck_objects) > 1:
@@ -291,7 +294,7 @@ def pair(puck_serial=None, puck_slot=None, controller_slot=0, puck_name=None, co
     pucks = sorted(devs["puck"], key=nodesort)
     ctrls = sorted(devs["ctrl"], key=nodesort)
     if not pucks:
-        raise SystemExit("no puck (28DE:1304) control interface found")
+        raise SystemExit("no puck (28DE:1304/1305) control interface found")
     if not ctrls:
         raise SystemExit("no controller (28DE:1302) control interface found — plug the ReversePuck controller in")
     ctrl = ctrls[0]
@@ -457,7 +460,7 @@ def cmd_list():
         for puck in ps:
             slots = puck['slots']
 
-            print(f"Puck: {puck['serial']} ({puck['vendor']})")
+            print(f"Puck: {puck['serial']} ({puck['info_str']})")
 
             for s in slots: 
                 if s["used"]:
