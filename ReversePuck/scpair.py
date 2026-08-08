@@ -58,17 +58,16 @@ FEAT_LEN = 64  # Valve feature reports are exactly 64 bytes
 
 
 def _sysfs_ids(node):
-    """Return (vid, pid, serial) for a /dev/hidrawN node, or (None, None, None)."""
+    """Return (vid, pid) for a /dev/hidrawN node, or (None, None)."""
     name = os.path.basename(node)
     try:
         # /sys/class/hidraw/hidrawN/device/uevent has HID_ID=0003:000028DE:00001304
         ue = open("/sys/class/hidraw/%s/device/uevent" % name).read()
     except Exception:
-        return (None, None, None)
+        return (None, None)
     
     vid = None
     pid = None 
-    serial = None
 
     for line in ue.splitlines():
         if line.startswith("HID_ID="):
@@ -76,12 +75,10 @@ def _sysfs_ids(node):
             try:
                 vid = int(parts[1], 16) & 0xFFFF
                 pid = int(parts[2], 16) & 0xFFFF
+                return (vid, pid)
             except:
                 pass
-        if line.startswith("HID_UNIQ="):
-            serial = line.split('=')[1]
     
-    return (vid, pid, serial)
 
 
 def _first_usage_page(fd):
@@ -109,11 +106,10 @@ def _first_usage_page(fd):
 
 
 class HidDev:
-    def __init__(self, node, vid, pid, serial, info_str = "Valve"):
+    def __init__(self, node, vid, pid, info_str = "Valve"):
         self.node = node
         self.vid = vid
         self.pid = pid
-        self.serial = serial
         self.info_str = info_str
         self.fd = os.open(node, os.O_RDWR)
         self.usage_page = _first_usage_page(self.fd)
@@ -123,6 +119,14 @@ class HidDev:
             os.close(self.fd)
         except Exception:
             pass
+
+    def get_bcd_version(self):
+        dxi = self.node.replace('/dev/', '')
+        base = Path(f"/sys/class/hidraw/{dxi}/device")
+        dev_dir = base.resolve().parent.parent
+        bcdDevice = int((dev_dir / "bcdDevice").read_text().strip(), 16)
+        return bcdDevice
+
 
     def set_feature(self, rid, cmd, payload=b""):
         buf = bytearray(FEAT_LEN)
@@ -138,15 +142,59 @@ class HidDev:
         fcntl.ioctl(self.fd, _IOC_GF(FEAT_LEN), buf, True)
         return bytes(buf)
 
-    def read_serial(self, rid):
-        """0xAE idx 1 -> unit serial string."""
-        try:
-            self.set_feature(rid, 0xAE, bytes([0x01]))
-            r = self.get_feature(rid)
-            # reply [rid][AE][len][idx][serial...]
-            return r[4:4 + 16].split(b"\x00")[0].decode("latin1", "replace")
-        except Exception:
-            return ""
+    def read_attribute_values(self, rid, cmd):
+        self.set_feature(rid, cmd)
+        data = self.get_feature(rid)[3:]
+        attribute_count = len(data) // 5
+
+        fstr = '<' + 'BL' * attribute_count + 'B'
+        unpacked = struct.unpack(fstr, data)
+
+        attribute_list = {}
+        for i in range(attribute_count):
+            tag = unpacked[2*i]
+            val = unpacked[2*i + 1]
+            attribute_list[tag] = val
+
+        return attribute_list
+
+    def read_firmware_version(self):
+        r = None
+        if self.pid in PUCK_PIDS:
+            if self.get_bcd_version() in [2, 0x212, 0x213, 0x211]:       
+                # 2 = Valve Puck or Machine, 211-213 OpenPuck? Unclear why.
+                attrs = self.read_attribute_values(2, 131)
+            else: 
+                # I wonder which official 
+                # Valve device uses a BCD other than 2. Maybe a prototype?
+                attrs = self.read_attribute_values(1, 166)
+
+        elif self.pid in CTRL_PIDS:
+            attrs = self.read_attribute_values(1, 131)
+
+        return attrs[4]
+
+    def read_serial(self):
+        r = None
+        if self.pid in PUCK_PIDS:
+            if self.get_bcd_version() in [2, 0x212, 0x213, 0x211]:       
+                # 2 = Valve Puck or Machine, 211-213 OpenPuck? Unclear why.
+                self.set_feature(2, 174, bytes([0x01]))
+                r = self.get_feature(2)
+            else: 
+                # I wonder which official 
+                # Valve device uses a BCD other than 2. Maybe a prototype?
+                self.set_feature(1, 164, bytes([0x01]))
+                r = self.get_feature(1)
+        elif self.pid in CTRL_PIDS:
+            self.set_feature(1, 174, bytes([0x01]))
+            r = self.get_feature(1)
+
+        if r is None: 
+            return None
+        
+        return r[4:4 + 16].split(b"\x00")[0].decode("latin1", "replace")
+       
 
 def nodesort(nodeobj):
     """Sorts the node path properly (numerically)."""
@@ -162,7 +210,7 @@ def enumerate_devices():
     """Return dict role -> list[HidDev]: {'puck':[...], 'ctrl':[...]} (control interfaces only)."""
     out = {"puck": [], "ctrl": []}
     for node in sorted(glob.glob("/dev/hidraw*"), key=nodesort):
-        vid, pid, serial = _sysfs_ids(node)
+        vid, pid = _sysfs_ids(node)
         if vid != VALVE_VID:
             continue
 
@@ -195,7 +243,7 @@ def enumerate_devices():
                     device_vendor = "OpenPuck"
 
         try:
-            dev = HidDev(node, vid, pid, serial, device_vendor)
+            dev = HidDev(node, vid, pid, device_vendor)
         except PermissionError:
             print("permission denied on %s (run with sudo or install the udev rule)" % node, file=sys.stderr)
             continue
@@ -227,9 +275,13 @@ def read_slots(puck_list):
     last_dev = None
     idx = 0
     for dev in sorted(puck_list, key=nodesort):
-        if last_dev is not None and dev.serial != last_dev.serial:
+
+        if last_dev is not None and dev.read_serial() != last_dev.read_serial():
             # This is a new puck, append the old puck and all its slots to the list.
-            pucks.append({"serial": last_dev.serial, "slots": slots, "info_str": last_dev.info_str})
+            pucks.append({"serial": last_dev.read_serial(), 
+                          "firmware_ts": last_dev.read_firmware_version(), 
+                          "slots": slots, 
+                          "info_str": last_dev.info_str})
             slots = []
             idx = 0
         try:
@@ -245,7 +297,10 @@ def read_slots(puck_list):
         last_dev = dev
         idx = idx + 1
 
-    pucks.append({"serial": dev.serial, "slots": slots, "info_str": dev.info_str})
+    pucks.append({"serial": dev.read_serial(), 
+                  "firmware_ts": last_dev.read_firmware_version(),
+                  "slots": slots, 
+                  "info_str": dev.info_str})
     return pucks
 
 
@@ -300,7 +355,7 @@ def pair(puck_serial=None, puck_slot=None, controller_slot=0, puck_name=None, co
     ctrl = ctrls[0]
 
     if controller_name is None: 
-        ctrl_serial_str = ctrl.read_serial(1) or "FXA000000000"
+        ctrl_serial_str = ctrl.read_serial() or "FXA000000000"
     else: 
         ctrl_serial_str = controller_name[:15]
 
@@ -324,7 +379,7 @@ def pair(puck_serial=None, puck_slot=None, controller_slot=0, puck_name=None, co
     # Controller name gets written to Puck
 
     print("Puck: %s slot %d controller %s" % (puck_serial, slot_obj['idx'], ctrl_serial_str))
-    print("Controller: %s slot %d puck %s" % (ctrl.read_serial(1), controller_slot, puck_serial_str))
+    print("Controller: %s slot %d puck %s" % (ctrl.read_serial(), controller_slot, puck_serial_str))
 
     # puck slot: 0xA2 [r1 r2][ctrl serial]
     slot_obj['dev'].set_feature(2, 0xA2, r + _ser16(ctrl_serial_str))
@@ -429,7 +484,7 @@ def get_controller_pairings():
 
             i = i + 1
 
-        controllers.append({"serial": c.read_serial(1), "slots": slots})
+        controllers.append({"serial": c.read_serial(), "firmware_ts": c.read_firmware_version(), "slots": slots})
 
     return controllers
 
@@ -443,7 +498,7 @@ def cmd_list():
         cs = get_controller_pairings()
 
         for c in cs:
-            print(f"Controller: {c['serial']}")
+            print(f"Controller: {c['serial']}, firmware {hex(c['firmware_ts']).replace('0x', '').upper()}")
 
             for s in c['slots']:
                 if s['used']:
@@ -460,7 +515,7 @@ def cmd_list():
         for puck in ps:
             slots = puck['slots']
 
-            print(f"Puck: {puck['serial']} ({puck['info_str']})")
+            print(f"Puck: {puck['serial']} ({puck['info_str']}), firmware {hex(puck['firmware_ts']).replace('0x', '').upper()}")
 
             for s in slots: 
                 if s["used"]:
