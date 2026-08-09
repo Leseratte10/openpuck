@@ -128,6 +128,11 @@ class HidDev:
             pass
 
     def get_bcd_version(self):
+        """
+        Relevant for Pucks. Both the standalone Puck and the receiver in the Steam Machine
+        use bcdVersion 2, but Steam also supports Pucks with other versions that sometimes 
+        behave differently.
+        """
         dxi = self.node.replace('/dev/', '')
         base = Path(f"/sys/class/hidraw/{dxi}/device")
         dev_dir = base.resolve().parent.parent
@@ -160,8 +165,9 @@ class HidDev:
 
         data = data[3:]
         attribute_count = len(data) // 5
+        padding_len = len(data) - (attribute_count * 5)
 
-        fstr = '<' + 'BL' * attribute_count + 'BBB'
+        fstr = '<' + 'BL' * attribute_count + 'B' * padding_len
         unpacked = struct.unpack(fstr, data)
 
         attribute_list = {}
@@ -190,32 +196,38 @@ class HidDev:
 
         return attrs[4]
 
-    def read_serial(self, force_esb = False):
+    def read_serial(self, force_esb = False, index = 1):
         # When sent to a Puck, force_esb=False will return the puck's serial, 
         # while force_esb=True will return the connected controller's serial.
+
+        # Index:
+        # 0: MXA123123123A ??
+        # 1: FXB9912345678 (serial number on sticker)
+        # 2: NA
+        # 3: fec01234c8af git firmware commit hash
+        # 4: MXA123123123A
 
         r = None
 
         if self.pid in CTRL_PIDS or force_esb:
-            self.set_feature(1, 0xae, bytes([0x01]))
+            self.set_feature(1, 0xae, bytes([index]))
             r = self.get_feature(1)
               
         elif self.pid in PUCK_PIDS:
             if self.get_bcd_version() in [2, 0x212, 0x213, 0x211]:       
                 # 2 = Valve Puck or Machine, 211-213 OpenPuck? Unclear why.
-                self.set_feature(2, 0xae, bytes([0x01]))
+                self.set_feature(2, 0xae, bytes([index]))
                 r = self.get_feature(2)
             else: 
-                # I wonder which official 
-                # Valve device uses a BCD other than 2. Maybe a prototype?
-                self.set_feature(1, 0xa4, bytes([0x01]))
+                # I wonder which official Valve device uses 
+                # a BCD other than 2. Maybe a prototype?
+                self.set_feature(1, 0xa4, bytes([index]))
                 r = self.get_feature(1)
 
         if r is None: 
             return None
         
-
-        return r[4:4 + 16].split(b"\x00")[0].decode("latin1", "replace")
+        return r[4:].split(b"\x00")[0].decode("latin1", "replace")
             
        
 
@@ -365,7 +377,8 @@ def read_slots(puck_list):
         if esb is not None:
             # This is a new puck, append the old puck and all its slots to the list.
             pucks.append({"serial": esb.read_serial(), 
-                        "firmware_ts": esb.read_firmware_version(), 
+                        "firmware_ts": esb.read_firmware_version(),
+                        "firmware_commit": esb.read_serial(False, 3),
                         "slots": slots, 
                         "info_str": esb.info_str})
         
@@ -413,9 +426,9 @@ def get_puck_slot_for_writing(puck_serial=None, slot=None):
     
 
 
-def pair(puck_serial=None, puck_slot=None, controller_slot=0, puck_name=None, controller_name=None, pkey=None):
+def pair(puck_serial=None, puck_slot=None, controller_serial=None, controller_slot=0, puck_name=None, controller_name=None, pkey=None):
     devs = enumerate_devices()
-    puck_devs = sorted(devs["puck"], key=nodesort)
+    puck_devs = devs["puck"]
     pucks = []
 
     for puck in puck_devs:
@@ -424,12 +437,38 @@ def pair(puck_serial=None, puck_slot=None, controller_slot=0, puck_name=None, co
     ctrls = sorted(devs["ctrl"], key=nodesort)
     if not pucks:
         raise SystemExit("no puck (28DE:1304/1305) control interface found")
-    if not ctrls:
-        raise SystemExit("no controller (28DE:1302) control interface found — plug the ReversePuck controller in")
-    ctrl = ctrls[0]
+    
+    ctrl = None
+    if controller_serial is not None:
+        # Check controllers connected through USB
+        for c in ctrls:
+            if c.read_serial() == controller_serial:
+                print(f"Found controller {controller_serial} connected over USB")
+                ctrl = c
+
+        if ctrl is None: 
+            # Check controllers connected wirelessly
+            for puck in pucks:
+                for slot in puck:
+                    try: 
+                        if slot.read_serial(True) == controller_serial:
+                            print(f"Found controller {controller_serial} connected wirelessly")
+                            ctrl = puck
+                    except BrokenPipeError:
+                        pass
+    else: 
+        # Controller serial is none. Assume the user wants to use the 1st wired controller. 
+        if not ctrls:
+            raise SystemExit("no controller (28DE:1302) control interface found - please plug in either a Steam Controller or the ReversePuck controller")
+           
+        ctrl = ctrls[0]
+
+    if ctrl is None:
+        raise SystemExit(f"Controller with serial {controller_serial} not found.")
+
 
     if controller_name is None: 
-        ctrl_serial_str = ctrl.read_serial() or "FXA000000000"
+        ctrl_serial_str = ctrl.read_serial(True)
     else: 
         ctrl_serial_str = controller_name[:15]
 
@@ -453,7 +492,7 @@ def pair(puck_serial=None, puck_slot=None, controller_slot=0, puck_name=None, co
     # Controller name gets written to Puck
 
     print("Puck: %s slot %d controller %s" % (puck_serial, slot_obj['idx'], ctrl_serial_str))
-    print("Controller: %s slot %d puck %s" % (ctrl.read_serial(), controller_slot, puck_serial_str))
+    print("Controller: %s slot %d puck %s" % (ctrl.read_serial(True), controller_slot, puck_serial_str))
 
     # puck slot: 0xA2 [r1 r2][ctrl serial]
     slot_obj['dev'].set_feature(2, 0xA2, r + _ser16(ctrl_serial_str))
@@ -490,17 +529,45 @@ def write_puck_slot(puck_serial=None, puck_slot=None, ctrl_name=None, pkey=None)
 
     print("done")
 
-def write_controller_slot(slot=0, puck_serial=None, pkey=None):
+def write_controller_slot(controller_serial=None, slot=0, puck_serial=None, pkey=None):
+
     devs = enumerate_devices()
-    ctrls = sorted(devs["ctrl"], key=nodesort)
-    if not ctrls:
-        raise SystemExit("no controller (28DE:1302) control interface found — plug the ReversePuck controller in")
-    
-    if slot not in [0, 1]:
-        raise SystemExit("invalid controller slot %d" % (slot))
+    puck_devs = devs["puck"]
+    pucks = []
 
+    for puck in puck_devs:
+        pucks.append(puck["esb"])
 
-    ctrl = ctrls[0]
+    ctrls = sorted(devs["ctrl"], key=nodesort) 
+    ctrl = None
+    if controller_serial is not None:
+        # Check controllers connected through USB
+        for c in ctrls:
+            if c.read_serial() == controller_serial:
+                print(f"Found controller {controller_serial} connected over USB")
+                ctrl = c
+
+        if ctrl is None: 
+            # Check controllers connected wirelessly
+            for puck in pucks:
+                for slot in puck:
+                    print(slot)
+                    try: 
+                        if slot.read_serial(True) == controller_serial:
+                            print(f"Found controller {controller_serial} connected wirelessly")
+                            ctrl = puck
+                    except BrokenPipeError:
+                        pass
+    else: 
+        # Controller serial is none. Assume the user wants to use the 1st wired controller. 
+        if not ctrls:
+            raise SystemExit("no controller (28DE:1302) control interface found - please plug in a Steam Controller")
+           
+        ctrl = ctrls[0]
+
+    if ctrl is None:
+        raise SystemExit(f"Controller with serial {controller_serial} not found.")
+
 
     if pkey is None: 
         r = os.urandom(8)
@@ -549,7 +616,10 @@ def get_single_controller_pairings(controller_dev):
 
         i = i + 1
 
-    return {"serial": controller_dev.read_serial(True), "firmware_ts": controller_dev.read_firmware_version(True), "slots": slots}
+    return {"serial": controller_dev.read_serial(True), 
+            "firmware_ts": controller_dev.read_firmware_version(True), 
+            "firmware_commit": controller_dev.read_serial(True, 3), 
+            "slots": slots}
 
 
 def cmd_reboot(device_serial: str, reboot_type: int):
@@ -633,17 +703,16 @@ def cmd_list():
         for puck in ps:
             slots = puck['slots']
 
-            print(f"Puck: {puck['serial']} ({puck['info_str']}), firmware {hex(puck['firmware_ts']).replace('0x', '').upper()}")
+            firmware_str = hex(puck['firmware_ts']).replace('0x', '').upper() + " (" + puck['firmware_commit']  + ")"
+
+            print(f"Puck: {puck['serial']} ({puck['info_str']}), firmware {firmware_str}")
 
             for s in slots: 
                 suffix = ""
                 if s["active"]:
                     conn_serial = s['dev'].read_serial(True)
                     suffix = f", connected to controller " + conn_serial
-
-                    controller_slots = get_single_controller_pairings(s['dev'])
-
-                    ctrls_esb.append(controller_slots)
+                    ctrls_esb.append(s['dev'])
 
                 if s["used"]:
                     print("  slot %d: %s (key %s)%s" % (s["idx"], s["serial"], s["rec"][:8].hex(), suffix))
@@ -656,33 +725,28 @@ def cmd_list():
         print("No Puck connected.")
 
 
-    if ctrls:
-        for c in ctrls:
+    if ctrls or ctrls_esb:
+        ctype = "wired"
+        for c in [*ctrls, None, *ctrls_esb]:
+            if c is None: 
+                ctype = "wireless"
+                continue
+
             cdata = get_single_controller_pairings(c)
+
+            firmware_str = hex(cdata['firmware_ts']).replace('0x', '').upper() + " (" + cdata['firmware_commit']  + ")"
         
-            print(f"Controller (wired): {cdata['serial']}, firmware {hex(cdata['firmware_ts']).replace('0x', '').upper()}")
+            print(f"Controller ({ctype}): {cdata['serial']}, firmware {firmware_str}")
 
             for s in cdata['slots']:
                 if s['used']:
                     print("  slot %d: %s (key %s)" % (s["idx"], s["serial"], s["key"]))
                 else:
-                    print("  slot %d: Unused" % (s["idx"]))
+                    print("  slot %d: Empty" % (s["idx"]))
 
             print()
 
-    if ctrls_esb:
-        for cdata in ctrls_esb:
-       
-            print(f"Controller (wireless): {cdata['serial']}, firmware {hex(cdata['firmware_ts']).replace('0x', '').upper()}")
-
-            for s in cdata['slots']:
-                if s['used']:
-                    print("  slot %d: %s (key %s)" % (s["idx"], s["serial"], s["key"]))
-                else:
-                    print("  slot %d: Unused" % (s["idx"]))
-            print()
-
-    if len(ctrls) == 0 and len(ctrls_esb) == 0:
+    else:
         print("No controller connected.")
 
 
@@ -702,10 +766,12 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list")
     p = sub.add_parser("pair")
-    #def pair(puck_serial=None, puck_slot=None, controller_slot=0, puck_name=None, controller_name=None, pkey=None):
+    #def pair(puck_serial=None, puck_slot=None, controller_serial=None, controller_slot=0, 
+    #           puck_name=None, controller_name=None, pkey=None)
     p.add_argument("--puck-serial", type=str, default=None)
     p.add_argument("--puck-slot", type=int, default=None)
     p.add_argument("--puck-name", type=str, default=None)
+    p.add_argument("--controller-serial", type=str, default=None)
     p.add_argument("--controller-slot", type=int, default=0)
     p.add_argument("--controller-name", type=str, default=None)
     p.add_argument("--key", type=steam_key_check, default=None)
@@ -719,7 +785,8 @@ def main():
     s.add_argument("--key", type=steam_key_check, default=None)
 
     c = sub.add_parser("write-controller")
-    #def write_controller_slot(slot=0, puck_serial=None, pkey=None):
+    #def write_controller_slot(controller_serial=None, slot=0, puck_serial=None, pkey=None):
+    c.add_argument("--controller-serial", type=str, default=None)
     c.add_argument("--controller-slot", type=int, default=None)
     c.add_argument("--puck-name", type=str, default=None)
     c.add_argument("--key", type=steam_key_check, default=None)
@@ -741,7 +808,8 @@ def main():
     if args.cmd == "list":
         cmd_list()
     elif args.cmd == "pair":
-        pair(args.puck_serial, args.puck_slot, args.controller_slot, args.puck_name, args.controller_name, args.key)
+        pair(args.puck_serial, args.puck_slot, args.controller_serial, 
+                args.controller_slot, args.puck_name, args.controller_name, args.key)
     elif args.cmd == "write-puck":
         write_puck_slot(args.puck_serial, args.puck_slot, args.controller_name, args.key)
     elif args.cmd == "write-controller":
