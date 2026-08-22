@@ -112,6 +112,13 @@ This is a tool to emulate a Steam Controller 2 with almost all of its inputs (ex
 
 [![ReversePuck Demo](https://img.youtube.com/vi/q_AvvpFn4A8/0.jpg)](https://www.youtube.com/watch?v=q_AvvpFn4A8)
 
+# ColdBoot Functionality
+ColdBoot lets a paired Steam Controller turn the PC on from a fully off state: a short press of the Steam button makes the puck pulse a GPIO pin that closes the motherboard's power-switch circuit, exactly like pressing the case power button. It works because the USB port keeps standby power on the board while the PC is off, so the puck stays awake and keeps listening. It only fires when the host is genuinely off (USB not enumerated), so it can't send a stray power press during normal use.
+
+This needs a little extra wiring (one resistor, one transistor, two wires to the front-panel header) and is off by default in the firmware -- build it with `make uf2 EXTRA_FLAGS="-DOPK_PWR_SWITCH=1"`.
+
+Bill of materials, schematic, and step-by-step wiring instructions: [How to wire up an NRF52 board for cold boot](https://github.com/safijari/openpuck/wiki/How-to-wire-up-an-NRF52-board-for-cold-boot).
+
 # Future work
 - Find a way to make Xinput mode and mouse work together on all platforms
 - Design the charging portion (and make it short proof)
