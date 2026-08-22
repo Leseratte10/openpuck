@@ -67,6 +67,8 @@ battery level are all reported natively and simultaneously, with rumble coming b
 SDL build that ships the SInput driver (SDL 3.4+ / a current Steam client); older hosts fall back to seeing a
 plain HID gamepad.
 
+**Rumble tuning.** In the translated modes (Xbox, Switch, PlayStation) the puck decodes the host's rumble packet itself, so the WebUSB panel's **Rumble** card can reshape it before it reaches the controller. *Strength* scales the amplitude the game asked for (200% is the default and matches previous firmware). *Style* picks how the two motors are driven: mono runs both at the stronger value, heavy and light mute one motor each, punchy softens weak effects while leaving strong ones alone, and soft lifts weak ones so subtle rumble is felt. A **Test rumble** button buzzes the controller with the current settings so you can compare without launching a game. Steam mode relays Steam's own haptics untouched, so these settings don't apply there.
+
 I'm also adding various QOL items as I go as well. For example having to hold the Steam button for like 6 seconds feels like an eternity. If Steam is open you can do Steam + Y for a shutdown. I'm adding Steam + Y for 2 seconds as a shutdown chort in ALL modes now.
 
 Note: to use the Switch mode on a real Switch you'll need to [enable the pro controller wired communication option](https://www.nintendo.com/en-gb/Support/Troubleshooting/How-to-Enable-Disable-Pro-Controller-Wired-Communication-1516284.html).
