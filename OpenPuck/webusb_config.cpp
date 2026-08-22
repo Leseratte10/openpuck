@@ -125,6 +125,7 @@ static void webusbSendBlob()
 	p[0] = 0xA5;
 	p[1] = WB_PAYLEN;
 
+	// clang-format off
 	// protocol version
 	// (21 = +rumble style (field 39, blob p[195]) and the REVIVED rumble-strength field 22 at blob p[53], 
 	// now carrying percent/2; 
@@ -146,6 +147,7 @@ static void webusbSendBlob()
 	// 8 = +per-slot link status; 
 	// 7 = +raw accel; 
 	// 6 = +swPro120/gyroScale)
+	// clang-format on
 	p[2] = 21;
 	p[3] = g_usbMode;
 	p[4] = (uint8_t)g_mDiv;

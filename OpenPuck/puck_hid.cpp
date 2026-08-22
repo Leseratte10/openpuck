@@ -438,10 +438,10 @@ static void handleSet(int slot, uint8_t rid, hid_report_type_t type,
 		S.resp[0] = IBEX_CMD_GET_ATTRIBUTES_VALUES;
 		if (g_isMachineInternal) {
 			S.resp[1] = sizeof ATTR83_MACHINE;
-			memcpy(S.resp + 2, ATTR83_MACHINE, sizeof ATTR83_MACHINE);
+			memcpy(S.resp + 2, ATTR83_MACHINE,
+			       sizeof ATTR83_MACHINE);
 			S.resp_len = 63;
-		}
-		else {
+		} else {
 			S.resp[1] = sizeof ATTR83_PUCK;
 			memcpy(S.resp + 2, ATTR83_PUCK, sizeof ATTR83_PUCK);
 			S.resp_len = 63;
@@ -662,8 +662,7 @@ void SteamPuckController::begin()
 	if (g_isMachineInternal) {
 		// Emulating a Steam Machine's internal receiver.
 		USBDevice.setID(0x28DE, 0x1305);
-	}
-	else {
+	} else {
 		// Emulating a Steam Controller Puck.
 		USBDevice.setID(0x28DE, 0x1304);
 	}

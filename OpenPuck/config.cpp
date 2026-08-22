@@ -98,7 +98,7 @@ struct Cfg {
 	// RUMBLE_SCALE_PCT default. This revives the byte the removed rumble-strength slider used, so the
 	// on-flash layout is unchanged and an existing cfg.bin still loads.
 	// rxWin10: legacy RF tunable slot (window now fixed; ignored). lizKeep: the id9=0 hold enable (see
-	// haptics.h LIZKEEP_MS). 
+	// haptics.h LIZKEEP_MS).
 	uint8_t rxWin10, lizKeep, isMachineInternal;
 	TypeCfg type[ET_COUNT]; // per-emulated-type back/qam/abSwap/padHaptics
 	// TAIL (appended after CFG_MAGIC 0xCF shipped): back4+D-pad mode assignments. New tail fields go HERE, at
@@ -214,11 +214,11 @@ void loadCfg()
 			if (c.lizKeep <= 1)
 				g_lizKeep = c.lizKeep;
 
-			// This variable previously used to have values 0/1. 
+			// This variable previously used to have values 0/1.
 			// Use a seperate trigger value 0xEE if we want to emulate a Steam Machine's
 			// internal receiver.
 			g_isMachineInternal = (c.isMachineInternal == 0xEE);
-			
+
 			// host-rumble strength (pct/2; 0 = never set, or a cfg.bin from before this
 			// field was revived -> keep the RUMBLE_SCALE_PCT default)
 			if (c.rumbScale2) {
