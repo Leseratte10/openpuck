@@ -248,8 +248,8 @@ uint8_t DInputController::maxSlots() const
 void DInputController::usbIdentity()
 {
 	// Deliberately NOT a cloned identity: nothing about DirectInput keys off VID/PID, and a generic ID keeps
-	// Steam Input / the console whitelists from claiming the device out from under the sim.
-	USBDevice.setID(0x1209, 0x4F50); // pid.codes community VID, "OP"
+	// Steam Input / the console whitelists from claiming the device
+	USBDevice.setID(0x1209, 0x4F50);
 	USBDevice.setVersion(0x0200);
 	USBDevice.setDeviceVersion(0x0100);
 	USBDevice.setManufacturerDescriptor("OpenPuck");
