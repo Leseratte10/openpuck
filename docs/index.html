@@ -258,6 +258,9 @@
       <div class="row" style="margin:10px 0 0"><button id="ctlrOff">Turn off controller</button>
         <span class="note" style="flex:1">Fires the controller power-off (0x9F "off!", x3) — the same path Steam's "turn off controller" and host-suspend use. Watch the link status to see it disconnect.</span>
       </div>
+      <div class="row" style="margin:10px 0 0"><button id="isMachineInternal">off</button>
+        <span class="note" style="flex:1"><strong>Emulate Steam Machine.</strong> Emulates the Steam Machine's internal receiver instead of the Steam Controller Puck.</span>
+      </div>
       <div class="row debugonly" style="margin:10px 0 0;border-top:1px solid #272d3d;padding-top:14px"><button id="stabBtn">Test stability</button>
         <span class="v" id="stabStatus" style="flex:0 0 auto;min-width:120px">—</span>
         <span class="note" style="flex:1">Buzzes the controllers every 10 s (keeps them awake) and times how long the puck stays up. On a reset it records the uptime and shows it by <em>Last reset</em>; it auto-resumes after the puck reconnects. The count is kept in this tab (a page refresh clears it).</span>
@@ -1118,6 +1121,7 @@ function applyBlob(p){
   checkUpdateNotice(); // needs BOTH the installed version (this blob) and relCache (fetched on connect)
   setSlider("mDiv",mDiv); setSlider("mFric",mFric);
   $("#persistMode").textContent = persistMode? "on":"off"; $("#persistMode").classList.toggle("active",!!persistMode);
+  { const la=(p.length>181?p[181] == 0xEE:false); $("#isMachineInternal").textContent = la?"on":"off"; $("#isMachineInternal").classList.toggle("active",!!la); }
   // per-type button config (blob v10/v17): 4 types x 9 bytes. readBlob() strips the 2-byte [0xA5][len] header, so
   // the firmware's buffer index 75 lands at JS index 73 here.
   if(p.length>=73+TYPE_DEFS.length*9){
