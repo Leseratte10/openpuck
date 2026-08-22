@@ -339,6 +339,7 @@ void SInputController::usbIdentity()
 	// The generic SInput device ID SDL's SInput driver matches on (2E8A = Raspberry Pi, the VID Hand Held
 	// Legend register their gamepads under; 10C6 = generic SInput/HOJA gamepad).
 	USBDevice.setID(0x2E8A, 0x10C6);
+	USBDevice.setVersion(0x0200);
 	USBDevice.setDeviceVersion(0x0210);
 	USBDevice.setManufacturerDescriptor("OpenPuck");
 	USBDevice.setProductDescriptor("OpenPuck SInput");
