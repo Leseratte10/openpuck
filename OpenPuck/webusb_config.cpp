@@ -1095,6 +1095,7 @@ void webusbPoll()
 				// Used to be experimental g_landAll87. Persisted; blob p[181] reflects state. Now ignored.
 				case 29:
 					// g_landAll87 = v ? 1 : 0;
+					g_isMachineInternal = v ? 0xEE : 0;
 					break;
 				}
 				if (persist)
